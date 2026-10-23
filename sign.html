@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>계약서 서명</title>
+<meta name="robots" content="noindex">
+<meta name="description" content="받은 계약서를 확인하고 이 화면에서 바로 서명하세요. 앱 설치는 필요 없습니다.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="계약서 서명 요청이 도착했습니다">
+<meta property="og:description" content="링크를 열어 계약서를 확인하고 바로 서명하세요. 앱 설치는 필요 없습니다.">
+<meta property="og:image" content="https://han7603-ceo.github.io/sign/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="theme-color" content="#eef1f6">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Gowun+Batang:wght@400;700&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <div class="mark" id="mark">·</div>
+      <div class="grow"><b id="coName">전자계약</b><small>전자계약</small></div>
+    </div>
+    <div class="steps" id="steps" hidden>
+      <div class="step"><i></i>본인 확인</div>
+      <div class="step"><i></i>계약서 읽기</div>
+      <div class="step"><i></i>서명</div>
+      <div class="step"><i></i>체결</div>
+    </div>
+  </header>
+  <main id="app"></main>
+  <p class="foot">전자서명법에 따라 전자서명도 서면 서명과 같은 효력이 있습니다.</p>
+</div>
+
+<div class="bar" id="bar" hidden><div class="in" id="barIn"></div></div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="서명하기">
+  <div class="sheet-head"><b>이름을 써 주세요</b><button class="ghost" id="sheetClose">닫기</button></div>
+  <div class="pad" id="pad"><div class="ph">정자로 크게 쓰면 좋아요 · 폰을 가로로 돌려도 됩니다</div><div class="baseline"></div><span class="x">×</span><canvas></canvas></div>
+  <div class="sheet-foot"><button class="btn" id="padClear">다시 쓰기</button><button class="cta seal" id="padOk">이 서명 사용</button></div>
+</div>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+var ID = new URLSearchParams(location.search).get('id') || '';
+var SESS = null, INFO = null, DOC = null, STEP = 0, SIG = null, MODE = 'draw', PAD = null;
+try { SESS = sessionStorage.getItem('ss:' + ID); } catch (e) {}
+
+var EVENT_LABEL = { sent: '서명 요청', opened: '열람', verified: '본인 확인', signed: '서명', payment: '지급 정보', completed: '체결' };
+
+function setStep(n) {
+  STEP = n;
+  $('#steps').hidden = !n;
+  $$('#steps .step').forEach(function (s, i) { s.classList.toggle('on', i === n - 1); s.classList.toggle('done', i < n - 1); });
+  window.scrollTo(0, 0);
+}
+function bar(html) { $('#bar').hidden = !html; $('#barIn').innerHTML = html || ''; }
+function show(html) { $('#app').innerHTML = '<section class="view">' + html + '</section>'; }
+function msg(title, text) { setStep(0); bar(''); show('<h1>' + esc(title) + '</h1><p class="lead">' + esc(text) + '</p>'); }
+
+function brand(name) {
+  $('#coName').textContent = name;
+  var core = String(name).replace(/^(주식회사|\(주\)|㈜)\s*/, '').trim();
+  $('#mark').textContent = core ? core[0] : '·';
+  document.title = name + ' · 계약서 서명';
+}
+
+function start() {
+  if (!/^[A-Za-z0-9]{16,40}$/.test(ID)) return msg('링크를 다시 확인해 주세요', '받은 링크가 잘렸거나 잘못 복사된 것 같습니다. 문자나 메일의 링크를 다시 눌러 주세요.');
+  run('계약서를 불러오는 중…', api('s.load', ID)).then(function (info) {
+    INFO = info;
+    brand(info.companyName);
+    if (info.status === 'canceled') return msg('취소된 서명 요청입니다', info.companyName + '에서 이 요청을 취소했습니다. 새 링크를 받으셨다면 그 링크로 열어 주세요.');
+    if (SESS) openDoc(true).catch(function () { SESS = null; showVerify(); });
+    else showVerify();
+  }, function (e) { msg('계약서를 열 수 없습니다', e.message); });
+}
+
+// ---------------------------------------------------------------- 1. 본인 확인
+function showVerify() {
+  setStep(1);
+  var email = INFO.verify === 'email';
+  show('<h1>' + esc(INFO.counterName) + '님, ' + esc(INFO.title) + '가 도착했습니다</h1>' +
+    '<p class="lead">본인 확인 후 계약서를 읽고, 이 화면에서 바로 서명하시면 됩니다. 앱 설치는 필요 없습니다.</p>' +
+    '<div class="card"><span class="label">보낸 곳</span><dl class="meta"><dt>회사</dt><dd>' + esc(INFO.companyName) + '</dd>' +
+    '<dt>계약서</dt><dd>' + esc(INFO.title) + '</dd>' + (INFO.project ? '<dt>내용</dt><dd>' + esc(INFO.project) + '</dd>' : '') + '</dl></div>' +
+    '<div class="section"><span class="label">본인 확인</span>' +
+    (email
+      ? '<p class="muted" style="margin:0">' + esc(INFO.email) + ' 으로 6자리 확인 코드를 보내 드립니다.</p>' +
+        '<button class="btn block" id="send" style="margin-top:12px">확인 코드 받기</button>' +
+        '<div class="otp" id="otp" hidden>' + [1, 2, 3, 4, 5, 6].map(function (n) { return '<input id="o' + n + '" inputmode="numeric" autocomplete="' + (n === 1 ? 'one-time-code' : 'off') + '" maxlength="6" aria-label="코드 ' + n + '번째">'; }).join('') + '</div>' +
+        '<div class="muted" id="resendRow" hidden>메일이 안 왔나요? 스팸함도 확인해 주세요. <button class="link" id="resend">코드 다시 받기</button></div>'
+      : '<p class="muted" style="margin:0">생년월일 6자리를 입력해 주세요. (예: 950302)</p>' +
+        '<input type="text" id="birth" inputmode="numeric" maxlength="8" placeholder="생년월일 6자리" style="margin-top:12px;font-size:20px;letter-spacing:4px;text-align:center">') +
+    '</div>');
+  bar('<button class="cta" id="next" disabled>확인</button>');
+  var otp = $$('#otp input');
+  function code() { return email ? otp.map(function (i) { return i.value; }).join('') : $('#birth').value.replace(/\D/g, ''); }
+  function check() { $('#next').disabled = code().length < 6; }
+  if (email) {
+    function send() {
+      run('메일 보내는 중…', api('s.sendCode', ID)).then(function () {
+        $('#send').hidden = true; $('#otp').hidden = false; $('#resendRow').hidden = false;
+        toast('메일을 보냈습니다. 받은편지함을 확인해 주세요.', 3500); otp[0].focus();
+      });
+    }
+    $('#send').onclick = send; $('#resend').onclick = send;
+    otp.forEach(function (inp, i) {
+      inp.addEventListener('input', function () {
+        var v = inp.value.replace(/\D/g, '');
+        if (v.length > 1) { v.split('').slice(0, 6 - i).forEach(function (d, k) { otp[i + k].value = d; }); (otp[Math.min(5, i + v.length)] || inp).focus(); }
+        else { inp.value = v; if (v && otp[i + 1]) otp[i + 1].focus(); }
+        check();
+        if (code().length === 6) verify();
+      });
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Backspace' && !inp.value && otp[i - 1]) otp[i - 1].focus(); });
+    });
+  } else {
+    $('#birth').oninput = function () { this.value = this.value.replace(/\D/g, ''); check(); };
+    $('#birth').onkeydown = function (e) { if (e.key === 'Enter' && code().length >= 6) verify(); };
+  }
+  var busyVerify = false;
+  function verify() {
+    if (busyVerify) return; busyVerify = true;
+    run('확인 중…', api('s.verify', ID, code())).then(function (r) {
+      SESS = r.session; try { sessionStorage.setItem('ss:' + ID, SESS); } catch (e) {}
+      toast('본인 확인 완료');
+      openDoc();
+    }, function () { busyVerify = false; otp.forEach(function (i) { i.value = ''; }); if (otp[0]) otp[0].focus(); check(); });
+  }
+  $('#next').onclick = verify;
+}
+
+// ---------------------------------------------------------------- 2. 읽기
+function openDoc(quiet) {
+  var p = api('s.open', ID, SESS);
+  return (quiet ? p : run('계약서를 여는 중…', p)).then(function (d) {
+    DOC = d;
+    if (d.status === 'completed') return showDone();
+    if (d.status === 'change') return msg('수정 요청을 보냈습니다', DOC.companyName + '에서 내용을 고쳐 새 링크를 보내 드립니다.');
+    if (d.status !== 'sent') return msg(d.statusLabel, '이 계약서는 지금 서명할 수 없습니다.');
+    showRead();
+  });
+}
+
+function markSlot(root) {
+  // 서버가 '(서명 전)'으로 비워 둔 칸 중 상대방 칸을 "여기에 서명"으로
+  var cells = $$('.d-table td', root).filter(function (td) { return td.textContent.trim() === '(서명 전)'; });
+  var td = cells[cells.length - 1];
+  if (td) { td.className = 'slot-wait'; td.id = 'slot'; td.innerHTML = '<span>여기에 서명</span>'; }
+}
+
+function showRead() {
+  setStep(2);
+  show('<div class="read-bar"><i id="readBar"></i></div><article class="doc" id="doc">' + DOC.html + '</article>' +
+    '<p style="text-align:center;margin-top:14px"><button class="ghost" id="askChange">고칠 내용이 있나요? 수정 요청하기</button></p>');
+  markSlot($('#doc'));
+  bar('<button class="cta" id="next" disabled>끝까지 읽어 주세요</button>');
+  $('#askChange').onclick = askChange;
+  $('#next').onclick = function () { if (!this.disabled) showSign(); };
+  onScroll();
+}
+function readRatio() {
+  var d = $('#doc'); if (!d) return 0;
+  var r = d.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (window.innerHeight - 110 - r.top) / r.height));
+}
+function onScroll() {
+  if (STEP !== 2) return;
+  var r = readRatio(), b = $('#next');
+  $('#readBar').style.width = Math.round(r * 100) + '%';
+  if (r >= .97) { b.disabled = false; b.textContent = '다 읽었어요, 서명하기'; }
+  else if (b.disabled) b.textContent = '끝까지 읽어 주세요 (' + Math.round(r * 100) + '%)';
+}
+window.addEventListener('scroll', onScroll, { passive: true });
+window.addEventListener('resize', onScroll);
+
+function askChange() {
+  var ov = modal('수정 요청', '<p>고쳐야 할 내용을 적어 주세요. ' + esc(DOC.companyName) + '에서 확인한 뒤 고친 계약서를 다시 보내 드립니다.</p>' +
+    '<textarea id="chg" placeholder="예: 촬영일이 11월 4일로 바뀌었습니다."></textarea><button class="cta" id="chgSend" style="margin-top:12px">요청 보내기</button>');
+  $('#chgSend', ov).onclick = function () {
+    run('보내는 중…', api('s.requestChange', ID, SESS, $('#chg', ov).value)).then(function () { ov.remove(); openDoc(); });
+  };
+}
+
+// ---------------------------------------------------------------- 3. 서명
+function showSign() {
+  setStep(3);
+  var h = '<h1>마지막으로 확인하고 서명해 주세요</h1><div class="card" style="padding:4px 18px">' +
+    DOC.consents.map(function (s, i) { return '<label class="check"><input type="checkbox" data-c="' + i + '"><span>' + esc(s) + '</span></label>'; }).join('') + '</div>' +
+    '<div class="section"><span class="label">서명</span><div class="seg"><button class="on" id="mDraw">손가락 서명</button><button id="mStamp">도장 사진</button></div>' +
+    '<div class="sig-preview" id="sigPreview" role="button" tabindex="0" aria-label="서명하기"></div><input type="file" accept="image/*" id="stampFile" hidden></div>';
+  if (DOC.payment) {
+    h += '<div class="section"><span class="label">지급 정보</span><div class="lock">' +
+      '<svg width="16" height="18" viewBox="0 0 16 18" fill="none" aria-hidden="true"><rect x="1.5" y="7.5" width="13" height="9.5" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 7.5V5a3.5 3.5 0 0 1 7 0v2.5" stroke="currentColor" stroke-width="1.6"/></svg>' +
+      '<span>대금 지급과 원천징수 신고(소득세법)에만 씁니다. 이 화면에서 암호화되어 전송되고, 계약서에는 나오지 않으며 담당자만 열 수 있습니다.</span></div>' +
+      '<label class="f" for="p_rrn">주민등록번호 <span class="req">*</span></label><input type="text" id="p_rrn" inputmode="numeric" maxlength="14" placeholder="000000-0000000" autocomplete="off">' +
+      '<label class="f" for="p_bank">은행 <span class="req">*</span></label><input type="text" id="p_bank" placeholder="예: 국민은행" autocomplete="off">' +
+      '<label class="f" for="p_account">계좌번호 <span class="req">*</span></label><input type="text" id="p_account" inputmode="numeric" autocomplete="off">' +
+      '<label class="f" for="p_holder">예금주 <span class="req">*</span></label><input type="text" id="p_holder" autocomplete="off">' +
+      '<label class="f" for="p_id">신분증 사본 (선택)</label><input type="file" id="p_id" accept="image/*">' +
+      '<label class="f" for="p_bankimg">통장 사본 (선택)</label><input type="file" id="p_bankimg" accept="image/*"></div>';
+  }
+  show(h);
+  bar('<button class="cta seal" id="next" disabled>동의하고 서명하기</button><button class="ghost" id="back">계약서 다시 보기</button>');
+  $('#back').onclick = showRead;
+  $('#next').onclick = submit;
+  if (DOC.payment) {
+    $('#p_rrn').oninput = function () { var v = this.value.replace(/\D/g, '').slice(0, 13); this.value = v.length > 6 ? v.slice(0, 6) + '-' + v.slice(6) : v; check(); };
+    ['p_bank', 'p_account', 'p_holder'].forEach(function (id) { $('#' + id).oninput = check; });
+    $('#p_holder').value = INFO.counterName || '';
+  }
+  $$('[data-c]').forEach(function (c) { c.onchange = check; });
+  $('#mDraw').onclick = function () { setMode('draw'); };
+  $('#mStamp').onclick = function () { setMode('stamp'); };
+  $('#sigPreview').onclick = openSig;
+  $('#sigPreview').onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSig(); } };
+  $('#stampFile').onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    run('도장 다듬는 중…', stampFromFile(f)).then(setSig);
+    this.value = '';
+  };
+  setMode(MODE);
+  if (SIG) setSig(SIG);
+}
+
+function setMode(m) {
+  MODE = m;
+  $('#mDraw').classList.toggle('on', m === 'draw'); $('#mStamp').classList.toggle('on', m === 'stamp');
+  SIG = null; drawPreview(); check();
+}
+function drawPreview() {
+  $('#sigPreview').innerHTML = SIG ? '<img alt="내 서명" src="' + SIG + '">' :
+    '<div class="baseline"></div><span class="x">×</span><span>' + (MODE === 'draw' ? '눌러서 서명하기' : '눌러서 도장 사진 고르기') + '</span>';
+}
+function setSig(url) { SIG = url; drawPreview(); check(); }
+function openSig() {
+  if (MODE === 'stamp') return $('#stampFile').click();
+  $('#sheet').classList.add('on');
+  requestAnimationFrame(function () { if (!PAD) { PAD = new SignaturePad($('#pad')); } else PAD.clear(); });
+}
+$('#sheetClose').onclick = function () { $('#sheet').classList.remove('on'); };
+$('#padClear').onclick = function () { if (PAD) PAD.clear(); };
+$('#padOk').onclick = function () {
+  if (!PAD || PAD.isEmpty()) return toast('이름을 써 주세요');
+  setSig(PAD.toDataUrl()); $('#sheet').classList.remove('on'); toast('서명을 넣었습니다');
+};
+
+function paymentReady() {
+  if (!DOC.payment) return true;
+  return /^\d{6}-\d{7}$/.test($('#p_rrn').value) && $('#p_bank').value.trim() && $('#p_account').value.trim() && $('#p_holder').value.trim();
+}
+function check() {
+  var b = $('#next'); if (!b || STEP !== 3) return;
+  var all = $$('[data-c]').every(function (c) { return c.checked; });
+  b.disabled = !(all && SIG && paymentReady());
+}
+
+function submit() {
+  if (this.disabled) return;
+  var consents = $$('[data-c]').map(function (c) { return DOC.consents[Number(c.dataset.c)]; });
+  var payP = Promise.resolve(null);
+  if (DOC.payment) {
+    if (!DOC.pubKey) return toast('회사의 암호 설정이 안 되어 있습니다. 회사에 알려 주세요.', 4000);
+    var p = { name: INFO.counterName, rrn: $('#p_rrn').value.trim(), bank: $('#p_bank').value.trim(), account: $('#p_account').value.trim(), holder: $('#p_holder').value.trim() };
+    var f1 = $('#p_id').files[0], f2 = $('#p_bankimg').files[0];
+    payP = Promise.all([f1 ? compressPhoto(f1) : null, f2 ? compressPhoto(f2) : null]).then(function (ph) {
+      p.idPhoto = ph[0]; p.bankPhoto = ph[1];
+      return sealForAdmin(DOC.pubKey, p);
+    });
+  }
+  run('서명하고 체결본을 만드는 중… 20초쯤 걸립니다', payP.then(function (box) {
+    return api('s.sign', ID, SESS, { signature: SIG, mode: MODE, consents: consents, ua: navigator.userAgent, payment: box });
+  })).then(function () { return openDoc(); });
+}
+
+// ---------------------------------------------------------------- 4. 체결
+function kst(iso) {
+  var d = new Date(new Date(iso).getTime() + 9 * 3600e3);
+  return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + ' ' + String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+}
+function showDone() {
+  setStep(4);
+  var trail = (DOC.events || []).filter(function (e) { return EVENT_LABEL[e.type]; })
+    .map(function (e) { return '<li><span>' + EVENT_LABEL[e.type] + '</span><b>' + kst(e.at) + '</b></li>'; }).join('');
+  show('<div class="done-hero"><div class="seal-anim">체결<br>완료</div><h1 style="margin-top:6px">계약이 체결되었습니다</h1>' +
+    '<p class="lead" style="margin-bottom:0">같은 계약서를 ' + esc(DOC.companyName) + '와(과) ' + esc(INFO.counterName) + '님이 함께 보관합니다.<br>이메일을 등록하셨다면 PDF를 메일로도 보내 드렸어요.</p></div>' +
+    '<div class="files"><button class="file main" data-dl="pdf"><span><b>체결본 PDF</b><small>서명·도장·확인서 포함</small></span><span aria-hidden="true">↓</span></button>' +
+    '<button class="file" data-dl="hwpx"><b>한글</b><small>.hwpx</small></button><button class="file" data-dl="docx"><b>워드</b><small>.docx</small></button>' +
+    '<button class="file" id="again"><b>다시 보기</b><small>계약서</small></button></div>' +
+    '<div class="card" style="margin-top:16px"><span class="label">전자서명 기록</span><ul class="trail">' + trail + '</ul><div class="hash">문서 고유값 ' + esc(DOC.hash) + '</div></div>' +
+    '<article class="doc" id="doc" hidden style="margin-top:12px">' + DOC.html + '</article>');
+  bar('');
+  $$('[data-dl]').forEach(function (b) { b.onclick = function () { run('파일 준비 중…', api('s.download', ID, SESS, b.dataset.dl)).then(downloadB64); }; });
+  $('#again').onclick = function () { var d = $('#doc'); d.hidden = !d.hidden; if (!d.hidden) d.scrollIntoView({ behavior: 'smooth' }); };
+}
+
+start();
+</script>
+</body>
+</html>

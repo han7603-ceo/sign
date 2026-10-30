@@ -150,9 +150,10 @@ function renderForm() {
     '<label><input type="radio" name="verify" value="email"' + (DRAFT.verify !== 'birth' ? ' checked' : '') + '><span>이메일 인증 코드</span></label>' +
     '<label><input type="radio" name="verify" value="birth"' + (DRAFT.verify === 'birth' ? ' checked' : '') + '><span>생년월일 입력</span></label></div>' +
     '<div class="help">이메일 인증이 더 확실합니다. 이메일을 모르면 생년월일로 확인합니다(위 생년월일 칸 필수).</div>' +
-    (t.payment ? '<label class="consent"><input type="checkbox" id="payment"' + (DRAFT.payment !== false ? ' checked' : '') + '><span><b>지급 정보 받기</b><br><span class="muted">서명 뒤 주민등록번호·계좌를 암호화해서 받습니다(원천징수 신고용). 상대가 사업자면 자동으로 빠집니다.</span></span></label>' : '') +
+    // 암호 키가 없으면 지급 정보 칸은 꺼 두고 계약서는 그대로 보낼 수 있게 한다
+    (t.payment ? '<label class="consent"><input type="checkbox" id="payment"' + (SETTINGS.keys && DRAFT.payment !== false ? ' checked' : '') + (SETTINGS.keys ? '' : ' disabled') + '><span><b>지급 정보 받기</b><br><span class="muted">' +
+      (SETTINGS.keys ? '서명 뒤 주민등록번호·계좌를 암호화해서 받습니다(원천징수 신고용). 상대가 사업자면 자동으로 빠집니다.' : '설정에서 지급 정보 암호 키를 만들면 켤 수 있습니다. 지금은 계약서만 보냅니다.') + '</span></span></label>' : '') +
     '<label class="consent"><input type="checkbox" id="sendEmail"' + (DRAFT.sendEmail ? ' checked' : '') + '><span>상대방 이메일로도 링크 보내기</span></label>' +
-    (SETTINGS.keys || !t.payment ? '' : '<div class="notice warn">지급 정보를 받으려면 설정에서 <b>지급 정보 암호 키</b>를 먼저 만들어 주세요.</div>') +
     '</div>';
   h += '<div class="row" style="margin:16px 0 40px"><button class="btn" id="preview">미리보기</button><button class="btn primary grow" id="create">서명 요청 만들기</button></div>';
   $('#form').innerHTML = h;
@@ -171,7 +172,6 @@ function renderForm() {
   };
   $('#create').onclick = function () {
     collect();
-    if (DRAFT.payment && !SETTINGS.keys) return toast('설정에서 지급 정보 암호 키를 먼저 만들어 주세요.', 4000);
     run('서명 요청 만드는 중…', A('create', DRAFT)).then(function (r) {
       var name = DRAFT.counter.name, title = t.title;
       DRAFT = { templateKey: null };
